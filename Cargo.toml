@@ -1,13 +1,13 @@
 [package]
-name = "mangadex-discord-bot"
+name = "mangadex-bot"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serenity = "0.11"
 url = "2.3.1"
+uuid = "1.3.0"
 
 [dependencies.reqwest]
 version = "0.11"
@@ -16,6 +16,17 @@ features = ["json"]
 [dependencies.serde]
 version = "1.0"
 features = ["derive"]
+
+[dependencies.serenity]
+version = "0.11"
+default_features = false
+features = [
+    "builder",
+    "client",
+    "gateway",
+    "rustls_backend",
+    "model",
+]
 
 [dependencies.tokio]
 version = "1.0"
