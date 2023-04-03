@@ -17,6 +17,7 @@ use serenity::{
 use url::{Host, Url};
 use uuid::Uuid;
 
+use crate::mangadex;
 use crate::Handler;
 
 /// Registers this command with the Discord client.
@@ -39,6 +40,15 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
     let url_or_id = options[0].value.as_ref().unwrap().as_str().unwrap();
 
     if let Some(manga_id) = manga_id_from_option(url_or_id) {
+        let title = match mangadex::english_title(manga_id).await {
+            Ok(Some(title)) => title,
+            Ok(None) => manga_id.to_string(),
+            Err(err) => {
+                println!("Error fetching manga title: {err}");
+                return;
+            }
+        };
+
         // Update the application's tracking list in a critical section.
         {
             let mut app = handler.app.write().await;
@@ -50,7 +60,7 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
                 response
                     .kind(InteractionResponseType::ChannelMessageWithSource)
                     .interaction_response_data(|message| {
-                        message.content(format!("Now tracking updates for {manga_id}."))
+                        message.content(format!("Now tracking updates for {title}."))
                     })
             })
             .await

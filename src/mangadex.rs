@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use url::Url;
+use uuid::Uuid;
 
 const SITE: &'static str = "https://api.mangadex.org";
 
@@ -8,9 +11,24 @@ pub struct ApiResponse<T> {
     pub result: String,
     pub response: String,
     pub data: T,
-    pub limit: i32,
-    pub offset: i32,
-    pub total: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Manga {
+    pub id: String,
+    pub attributes: MangaAttributes,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MangaAttributes {
+    pub title: HashMap<String, String>,
+}
+
+impl MangaAttributes {
+    /// Gets the english title for this manga if it exists.
+    pub fn english_title(&self) -> Option<&str> {
+        self.title.get("en").map(|x| x.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -42,6 +60,24 @@ pub struct ChapterAttributes {
     pub updated_at: Option<String>,
     pub published_at: Option<String>,
     pub readable_at: Option<String>,
+}
+
+/// Retrieves the english title for a manga with a given id.
+pub async fn english_title(manga_id: Uuid) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let url = Url::parse(SITE)
+        .unwrap()
+        .join("/manga/")
+        .unwrap()
+        .join(&manga_id.to_string())
+        .unwrap();
+
+    let resp = reqwest::get(url)
+        .await?
+        .json::<ApiResponse<Manga>>()
+        .await?;
+
+    let title = resp.data.attributes.english_title().map(|s| s.to_owned());
+    Ok(title)
 }
 
 fn latest_chapter_url(manga_id: &str) -> Url {
