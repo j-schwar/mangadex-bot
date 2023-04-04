@@ -130,6 +130,8 @@ async fn periodically_scan_for_updates(app: Arc<RwLock<App>>) {
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+
     let app = App::singleton();
 
     // Login with a bot token from the environment

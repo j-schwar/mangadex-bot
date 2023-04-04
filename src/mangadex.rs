@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use serde::Deserialize;
 use url::Url;
@@ -6,11 +6,66 @@ use uuid::Uuid;
 
 const SITE: &'static str = "https://api.mangadex.org";
 
+/// An error returned by the MangaDex API.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiError {
+    id: String,
+    status: i32,
+    title: String,
+    detail: String,
+}
+
+/// Errors returned by Mangadex operations.
+#[derive(Debug, Clone)]
+pub enum Error {
+    NetworkError,
+    Api(Vec<ApiError>),
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Error::*;
+
+        match &self {
+            NetworkError => f.write_str("An error occurred while communicating with the MangaDex."),
+            Api(errors) => match errors.len() {
+                0 => f.write_str("An error was returned by the MangaDex API."),
+                1 => write!(
+                    f,
+                    "An error was returned by the MangaDex API: {}",
+                    errors[0].detail
+                ),
+                _ => f.write_str(
+                    "Many errors were returned by the MangaDex API, see logs for more information.",
+                ),
+            },
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// Result type returned by Mangadex operations.
+pub type Result<T> = std::result::Result<T, Error>;
+
+/// Models a response from the MangaDex API that contains a single entity.
 #[derive(Debug, Deserialize)]
-pub struct ApiResponse<T> {
-    pub result: String,
-    pub response: String,
-    pub data: T,
+#[serde(tag = "result")]
+#[serde(rename_all = "camelCase")]
+enum EntityResponse<T> {
+    Ok { data: T },
+    Error { errors: Vec<ApiError> },
+}
+
+impl<T> EntityResponse<T> {
+    /// Converts this response into a [Result].
+    fn into_result(self) -> Result<T> {
+        match self {
+            EntityResponse::Ok { data } => Ok(data),
+            EntityResponse::Error { errors } => Err(Error::Api(errors)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -63,7 +118,7 @@ pub struct ChapterAttributes {
 }
 
 /// Retrieves the english title for a manga with a given id.
-pub async fn english_title(manga_id: Uuid) -> Result<Option<String>, Box<dyn std::error::Error>> {
+pub async fn english_title(manga_id: Uuid) -> Result<Option<String>> {
     let url = Url::parse(SITE)
         .unwrap()
         .join("/manga/")
@@ -71,34 +126,75 @@ pub async fn english_title(manga_id: Uuid) -> Result<Option<String>, Box<dyn std
         .join(&manga_id.to_string())
         .unwrap();
 
-    let resp = reqwest::get(url)
+    let manga = fetch_json::<EntityResponse<Manga>>(url)
         .await?
-        .json::<ApiResponse<Manga>>()
-        .await?;
-
-    let title = resp.data.attributes.english_title().map(|s| s.to_owned());
+        .into_result()
+        .map_err(log_error)?;
+    let title = manga.attributes.english_title().map(|s| s.to_owned());
     Ok(title)
 }
 
-fn latest_chapter_url(manga_id: &str) -> Url {
-    let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
-    url.query_pairs_mut()
-        .append_pair("manga", manga_id)
-        .append_pair("limit", "1")
-        .append_pair("translatedLanguage[]", "en")
-        .append_pair("contentRating[]", "safe")
-        .append_pair("contentRating[]", "suggestive")
-        .append_pair("order[chapter]", "desc");
-    url
+/// Sends an HTTP GET request to a given url decoding the response, if successful, from JSON.
+async fn fetch_json<T>(url: Url) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let resp = reqwest::get(url.clone())
+        .await
+        .map_err(|err| err.with_url(url.clone()))
+        .map_err(network_error)?;
+
+    resp.json::<T>()
+        .await
+        .map_err(|err| err.with_url(url))
+        .map_err(network_error)
 }
 
-pub async fn print_latest_chapter() -> Result<Option<Chapter>, Box<dyn std::error::Error>> {
-    let url = latest_chapter_url("26e40241-4a4e-4d12-a04d-cb3f7f707100");
-    let resp = reqwest::get(url)
-        .await?
-        .json::<ApiResponse<Vec<Chapter>>>()
-        .await?;
-
-    let chapter = resp.data.first().cloned();
-    Ok(chapter)
+/// Converts a [reqwest::Error] into a [crate::mangadex::Error].
+fn network_error(err: reqwest::Error) -> Error {
+    log::error!("reqwest error: {err}");
+    Error::NetworkError
 }
+
+/// Logs an error returning it as is. Intended to be used via as a part of a call chain.
+fn log_error(err: Error) -> Error {
+    match &err {
+        Error::NetworkError => log::error!("A network error occurred"),
+        Error::Api(errors) => {
+            for err in errors {
+                log::error!(
+                    "mangadex error: id = {}, status = {}, title = {}, details = {}",
+                    err.id,
+                    err.status,
+                    err.title,
+                    err.detail
+                );
+            }
+        }
+    }
+
+    err
+}
+
+// fn latest_chapter_url(manga_id: &str) -> Url {
+//     let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
+//     url.query_pairs_mut()
+//         .append_pair("manga", manga_id)
+//         .append_pair("limit", "1")
+//         .append_pair("translatedLanguage[]", "en")
+//         .append_pair("contentRating[]", "safe")
+//         .append_pair("contentRating[]", "suggestive")
+//         .append_pair("order[chapter]", "desc");
+//     url
+// }
+
+// pub async fn print_latest_chapter() -> Result<Option<Chapter>, Box<dyn std::error::Error>> {
+//     let url = latest_chapter_url("26e40241-4a4e-4d12-a04d-cb3f7f707100");
+//     let resp = reqwest::get(url)
+//         .await?
+//         .json::<ApiResponse<Vec<Chapter>>>()
+//         .await?;
+
+//     let chapter = resp.data.first().cloned();
+//     Ok(chapter)
+// }
