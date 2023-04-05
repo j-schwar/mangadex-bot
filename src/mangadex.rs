@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
+use crate::{LatestChapterId, MangaId};
 use serde::Deserialize;
 use url::Url;
 use uuid::Uuid;
@@ -137,7 +138,7 @@ pub struct ChapterAttributes {
 }
 
 /// Retrieves the english title for a manga with a given id.
-pub async fn english_title(manga_id: Uuid) -> Result<Option<String>> {
+pub async fn english_title(manga_id: MangaId) -> Result<Option<String>> {
     let url = Url::parse(SITE)
         .unwrap()
         .join("/manga/")
@@ -154,7 +155,7 @@ pub async fn english_title(manga_id: Uuid) -> Result<Option<String>> {
 }
 
 /// Fetches the latest chapter for a given manga.
-pub async fn latest_chapter(manga_id: Uuid) -> Result<Option<Chapter>> {
+pub async fn latest_chapter(manga_id: MangaId) -> Result<Option<Chapter>> {
     let url = latest_chapter_url(manga_id);
 
     let mut chapter = fetch_json::<CollectionResponse<Chapter>>(url)
@@ -165,8 +166,26 @@ pub async fn latest_chapter(manga_id: Uuid) -> Result<Option<Chapter>> {
     Ok(chapter.pop())
 }
 
+/// Fetches the latest chapter for a given manga only returning it if it's id differs
+/// from the some previous latest chapter id.
+pub async fn updated_chapter(
+    manga_id: MangaId,
+    latest_chapter_id: LatestChapterId,
+) -> Result<Option<Chapter>> {
+    let chapter = latest_chapter(manga_id).await?.and_then(|c| {
+        let id = Uuid::try_parse(&c.id).unwrap();
+        if Some(id) != latest_chapter_id {
+            Some(c)
+        } else {
+            None
+        }
+    });
+
+    Ok(chapter)
+}
+
 /// Constructs a URL that fetches the latest chapter for a given manga.
-fn latest_chapter_url(manga_id: Uuid) -> Url {
+fn latest_chapter_url(manga_id: MangaId) -> Url {
     let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
     url.query_pairs_mut()
         .append_pair("manga", &manga_id.to_string())
