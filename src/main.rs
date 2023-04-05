@@ -16,7 +16,7 @@ mod mangadex;
 
 pub struct App {
     pub http: Option<Arc<Http>>,
-    pub data: HashMap<ChannelId, Vec<Uuid>>,
+    pub data: HashMap<ChannelId, HashMap<Uuid, Option<Uuid>>>,
 }
 
 impl App {
@@ -33,18 +33,31 @@ impl App {
         self.http = Some(http);
     }
 
-    fn track(&mut self, channel_id: ChannelId, manga_id: Uuid) {
+    /// Tracks a specific manga for a given channel.
+    ///
+    /// The latest existing chapter for this manga is fetched at this time and stored alongside
+    /// the manga id to be referenced later when searching for updates.
+    async fn track(&mut self, channel_id: ChannelId, manga_id: Uuid) -> mangadex::Result<()> {
+        let latest_chapter_id = mangadex::latest_chapter(manga_id)
+            .await?
+            .map(|c| Uuid::try_parse(&c.id).unwrap());
+        log::debug!("Found latest chapter for {manga_id} to be {latest_chapter_id:?}");
+
         match self.data.get_mut(&channel_id) {
-            Some(manga_ids) => {
-                manga_ids.push(manga_id);
+            Some(manga) => {
+                manga.insert(manga_id, latest_chapter_id);
             }
 
             None => {
-                self.data.insert(channel_id, vec![manga_id]);
+                let mut map = HashMap::with_capacity(1);
+                map.insert(manga_id, latest_chapter_id);
+
+                self.data.insert(channel_id, map);
             }
         }
 
-        println!("Tracking manga {manga_id} on channel {channel_id}");
+        log::info!("Tracking manga {manga_id} on channel {channel_id}");
+        Ok(())
     }
 }
 
@@ -94,7 +107,7 @@ impl EventHandler for Handler {
     }
 
     async fn ready(&self, ctx: Context, ready: Ready) {
-        println!("{} is now connected!", ready.user.name);
+        log::info!("{} is now connected!", ready.user.name);
 
         // Client is now ready, copy the HTTP delegate to the application so it can be
         // used elsewhere within the program.

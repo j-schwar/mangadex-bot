@@ -68,6 +68,25 @@ impl<T> EntityResponse<T> {
     }
 }
 
+/// Models a response from the MangaDex API that contains multiple entities.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "result")]
+#[serde(rename_all = "camelCase")]
+enum CollectionResponse<T> {
+    Ok { data: Vec<T> },
+    Error { errors: Vec<ApiError> },
+}
+
+impl<T> CollectionResponse<T> {
+    /// Converts this response into a [Result].
+    fn into_result(self) -> Result<Vec<T>> {
+        match self {
+            CollectionResponse::Ok { data } => Ok(data),
+            CollectionResponse::Error { errors } => Err(Error::Api(errors)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manga {
     pub id: String,
@@ -134,6 +153,31 @@ pub async fn english_title(manga_id: Uuid) -> Result<Option<String>> {
     Ok(title)
 }
 
+/// Fetches the latest chapter for a given manga.
+pub async fn latest_chapter(manga_id: Uuid) -> Result<Option<Chapter>> {
+    let url = latest_chapter_url(manga_id);
+
+    let mut chapter = fetch_json::<CollectionResponse<Chapter>>(url)
+        .await?
+        .into_result()
+        .map_err(log_error)?;
+
+    Ok(chapter.pop())
+}
+
+/// Constructs a URL that fetches the latest chapter for a given manga.
+fn latest_chapter_url(manga_id: Uuid) -> Url {
+    let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
+    url.query_pairs_mut()
+        .append_pair("manga", &manga_id.to_string())
+        .append_pair("limit", "1")
+        .append_pair("translatedLanguage[]", "en")
+        .append_pair("contentRating[]", "safe")
+        .append_pair("contentRating[]", "suggestive")
+        .append_pair("order[chapter]", "desc");
+    url
+}
+
 /// Sends an HTTP GET request to a given url decoding the response, if successful, from JSON.
 async fn fetch_json<T>(url: Url) -> Result<T>
 where
@@ -175,26 +219,3 @@ fn log_error(err: Error) -> Error {
 
     err
 }
-
-// fn latest_chapter_url(manga_id: &str) -> Url {
-//     let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
-//     url.query_pairs_mut()
-//         .append_pair("manga", manga_id)
-//         .append_pair("limit", "1")
-//         .append_pair("translatedLanguage[]", "en")
-//         .append_pair("contentRating[]", "safe")
-//         .append_pair("contentRating[]", "suggestive")
-//         .append_pair("order[chapter]", "desc");
-//     url
-// }
-
-// pub async fn print_latest_chapter() -> Result<Option<Chapter>, Box<dyn std::error::Error>> {
-//     let url = latest_chapter_url("26e40241-4a4e-4d12-a04d-cb3f7f707100");
-//     let resp = reqwest::get(url)
-//         .await?
-//         .json::<ApiResponse<Vec<Chapter>>>()
-//         .await?;
-
-//     let chapter = resp.data.first().cloned();
-//     Ok(chapter)
-// }

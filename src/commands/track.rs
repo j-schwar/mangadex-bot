@@ -38,6 +38,10 @@ pub fn register(command: &mut CreateApplicationCommand) -> &mut CreateApplicatio
 pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInteraction) {
     let options = command.data.options.as_slice();
     let url_or_id = options[0].value.as_ref().unwrap().as_str().unwrap();
+    log::info!(
+        "Received \"track\" interaction on channel {}: url or id = {url_or_id}",
+        command.channel_id
+    );
 
     if let Some(manga_id) = manga_id_from_option(url_or_id) {
         let title = match mangadex::english_title(manga_id).await {
@@ -52,7 +56,9 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
         // Update the application's tracking list in a critical section.
         {
             let mut app = handler.app.write().await;
-            app.track(command.channel_id, manga_id);
+            if let Err(_) = app.track(command.channel_id, manga_id).await {
+                return;
+            }
         }
 
         if let Err(err) = command
@@ -65,7 +71,7 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
             })
             .await
         {
-            println!("Error handling command \"track\": {err}");
+            log::error!("Error constructing interaction response for \"track\": {err}");
         }
     } else {
         handle_invalid_url(ctx, command).await;
