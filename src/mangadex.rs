@@ -211,11 +211,13 @@ async fn fetch_json<T>(url: Url) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
+    log::debug!("GET {url}");
     let resp = reqwest::get(url.clone())
         .await
         .map_err(|err| err.with_url(url.clone()))
         .map_err(network_error)?;
 
+    log::debug!("{resp:?}");
     resp.json::<T>()
         .await
         .map_err(|err| err.with_url(url))

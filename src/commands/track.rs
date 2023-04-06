@@ -44,6 +44,7 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
     );
 
     if let Some(manga_id) = manga_id_from_option(url_or_id) {
+        log::debug!("Fetching manga title...");
         let title = match mangadex::english_title(manga_id).await {
             Ok(Some(title)) => title,
             Ok(None) => manga_id.to_string(),
@@ -52,6 +53,7 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
                 return;
             }
         };
+        log::debug!("Manga title resolved to {title}");
 
         // Update the application's tracking list in a critical section.
         {
