@@ -134,10 +134,14 @@ impl EventHandler for Handler {
         // Discord setup is now finished, spawn long running tasks.
         //
 
+        let period_seconds = env::var("MANGADEX_UPDATE_PERIOD")
+            .ok()
+            .and_then(|x| x.parse().ok())
+            .unwrap_or(6 * 3600);
         let (tx, rx) = mpsc::channel(100);
         let app = self.app.clone();
         tokio::spawn(async move {
-            periodically_scan_for_updates(app, tx).await;
+            periodically_scan_for_updates(app, tx, Duration::from_secs(period_seconds)).await;
         });
 
         let app = self.app.clone();
@@ -147,9 +151,11 @@ impl EventHandler for Handler {
     }
 }
 
+/// Periodically triggers events to search for chapter updates to a given channel.
 async fn periodically_scan_for_updates(
     app: Arc<RwLock<App>>,
     tx: mpsc::Sender<(MangaId, LatestChapterId, Vec<ChannelId>)>,
+    period: Duration,
 ) {
     loop {
         let data = {
@@ -171,7 +177,7 @@ async fn periodically_scan_for_updates(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
 
-        tokio::time::sleep(Duration::from_secs(30)).await;
+        tokio::time::sleep(period).await;
     }
 }
 
