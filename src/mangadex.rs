@@ -101,8 +101,15 @@ pub struct MangaAttributes {
 
 impl MangaAttributes {
     /// Gets the english title for this manga if it exists.
+    ///
+    /// If the manga does not have an English title, the romanized Japanese or Chinese
+    /// title is returned instead.
     pub fn english_title(&self) -> Option<&str> {
-        self.title.get("en").map(|x| x.as_str())
+        self.title
+            .get("en")
+            .or_else(|| self.title.get("ja-ro"))
+            .or_else(|| self.title.get("zh-ro"))
+            .map(|x| x.as_str())
     }
 }
 
@@ -150,6 +157,8 @@ pub async fn english_title(manga_id: MangaId) -> Result<Option<String>> {
         .await?
         .into_result()
         .map_err(log_error)?;
+    log::debug!("Fetched {manga:?}");
+
     let title = manga.attributes.english_title().map(|s| s.to_owned());
     Ok(title)
 }
