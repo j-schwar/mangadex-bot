@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fmt::Display};
 
-use crate::{LatestChapterId, MangaId};
+use crate::LatestChapterId;
+use bson::Uuid;
 use serde::Deserialize;
 use url::Url;
-use uuid::Uuid;
 
 const SITE: &'static str = "https://api.mangadex.org";
 
@@ -145,12 +145,12 @@ pub struct ChapterAttributes {
 }
 
 /// Retrieves the english title for a manga with a given id.
-pub async fn english_title(manga_id: MangaId) -> Result<Option<String>> {
+pub async fn english_title(manga_id: &str) -> Result<Option<String>> {
     let url = Url::parse(SITE)
         .unwrap()
         .join("/manga/")
         .unwrap()
-        .join(&manga_id.to_string())
+        .join(manga_id)
         .unwrap();
 
     let manga = fetch_json::<EntityResponse<Manga>>(url)
@@ -164,7 +164,7 @@ pub async fn english_title(manga_id: MangaId) -> Result<Option<String>> {
 }
 
 /// Fetches the latest chapter for a given manga.
-pub async fn latest_chapter(manga_id: MangaId) -> Result<Option<Chapter>> {
+pub async fn latest_chapter(manga_id: &str) -> Result<Option<Chapter>> {
     let url = latest_chapter_url(manga_id);
 
     let mut chapter = fetch_json::<CollectionResponse<Chapter>>(url)
@@ -178,11 +178,11 @@ pub async fn latest_chapter(manga_id: MangaId) -> Result<Option<Chapter>> {
 /// Fetches the latest chapter for a given manga only returning it if it's id differs
 /// from the some previous latest chapter id.
 pub async fn updated_chapter(
-    manga_id: MangaId,
+    manga_id: &str,
     latest_chapter_id: LatestChapterId,
 ) -> Result<Option<Chapter>> {
     let chapter = latest_chapter(manga_id).await?.and_then(|c| {
-        let id = Uuid::try_parse(&c.id).unwrap();
+        let id = Uuid::parse_str(&c.id).unwrap();
         if Some(id) != latest_chapter_id {
             Some(c)
         } else {
@@ -194,7 +194,7 @@ pub async fn updated_chapter(
 }
 
 /// Constructs a URL that fetches the latest chapter for a given manga.
-fn latest_chapter_url(manga_id: MangaId) -> Url {
+fn latest_chapter_url(manga_id: &str) -> Url {
     let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
     url.query_pairs_mut()
         .append_pair("manga", &manga_id.to_string())

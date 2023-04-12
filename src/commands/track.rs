@@ -4,6 +4,7 @@
 //! application adds said manga to the list of tracked manga for the channel that the
 //! interaction as invoked on.
 
+use bson::Uuid;
 use serenity::{
     builder::CreateApplicationCommand,
     model::prelude::{
@@ -15,7 +16,6 @@ use serenity::{
     prelude::Context,
 };
 use url::{Host, Url};
-use uuid::Uuid;
 
 use crate::mangadex;
 use crate::Handler;
@@ -45,7 +45,7 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
 
     if let Some(manga_id) = manga_id_from_option(url_or_id) {
         log::debug!("Fetching manga title...");
-        let title = match mangadex::english_title(manga_id).await {
+        let title = match mangadex::english_title(&manga_id.to_string()).await {
             Ok(Some(title)) => title,
             Ok(None) => manga_id.to_string(),
             Err(err) => {
@@ -56,11 +56,12 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
         log::debug!("Manga title resolved to {title}");
 
         // Update the application's tracking list in a critical section.
+        if let Err(_) = handler
+            .app
+            .track(command.channel_id, &manga_id.to_string())
+            .await
         {
-            let mut app = handler.app.write().await;
-            if let Err(_) = app.track(command.channel_id, manga_id).await {
-                return;
-            }
+            return;
         }
 
         if let Err(err) = command
@@ -82,7 +83,7 @@ pub async fn run(handler: &Handler, ctx: Context, command: ApplicationCommandInt
 
 /// Extracts the manga id from a command options that is either an id or URL.
 fn manga_id_from_option(url_or_id: &str) -> Option<Uuid> {
-    if let Ok(id) = Uuid::try_parse(url_or_id) {
+    if let Ok(id) = Uuid::parse_str(url_or_id) {
         Some(id)
     } else if let Ok(url) = Url::parse(url_or_id) {
         manga_id_from_url(url)
@@ -103,7 +104,7 @@ fn manga_id_from_url(url: Url) -> Option<Uuid> {
     }
 
     let id_str = path_segments.next()?;
-    Uuid::try_parse(id_str).ok()
+    Uuid::parse_str(id_str).ok()
 }
 
 /// Responds to the interaction with an error message.

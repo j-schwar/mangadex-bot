@@ -1,9 +1,12 @@
-use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bson::doc;
+use bson::Uuid;
+use db::MongoClient;
 use mangadex::{Chapter, ChapterAttributes};
+use serde::Deserialize;
 use serenity::async_trait;
 use serenity::http::Http;
 use serenity::model::application::interaction::{Interaction, InteractionResponseType};
@@ -11,13 +14,10 @@ use serenity::model::gateway::Ready;
 use serenity::model::prelude::{ChannelId, GuildId};
 use serenity::prelude::*;
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 mod commands;
+mod db;
 mod mangadex;
-
-/// The id of a manga.
-pub type MangaId = Uuid;
 
 /// The id of a chapter.
 pub type ChapterId = Uuid;
@@ -26,60 +26,87 @@ pub type ChapterId = Uuid;
 pub type LatestChapterId = Option<ChapterId>;
 
 pub struct App {
-    pub data: HashMap<MangaId, (LatestChapterId, HashSet<ChannelId>)>,
+    pub data_client: MongoClient,
 }
 
 impl App {
-    fn singleton() -> Arc<RwLock<App>> {
-        let app = App {
-            data: HashMap::new(),
-        };
+    async fn singleton() -> Arc<App> {
+        let data_client = MongoClient::from_env()
+            .await
+            .expect("Error constructing MongoDB client");
 
-        Arc::new(RwLock::new(app))
+        let app = App { data_client };
+        Arc::new(app)
     }
 
     /// Tracks a specific manga for a given channel.
     ///
     /// The latest existing chapter for this manga is fetched at this time and stored alongside
     /// the manga id to be referenced later when searching for updates.
-    async fn track(&mut self, channel_id: ChannelId, manga_id: MangaId) -> mangadex::Result<()> {
+    async fn track(
+        &self,
+        channel_id: ChannelId,
+        manga_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let latest_chapter_id = mangadex::latest_chapter(manga_id)
             .await?
-            .map(|c| Uuid::try_parse(&c.id).unwrap());
+            .map(|c| Uuid::parse_str(&c.id).unwrap());
         log::debug!("Found latest chapter for {manga_id} to be {latest_chapter_id:?}");
 
-        match self.data.get_mut(&manga_id) {
-            Some((existing_chapter_id, channels)) => {
-                *existing_chapter_id = latest_chapter_id;
-                channels.insert(channel_id);
+        let manga_filter = doc! { "_id": manga_id };
+        match self.data_client.read(manga_filter.into()).await? {
+            Some(doc) => {
+                let manga: db::Manga = bson::from_bson(bson::Bson::Document(doc)).unwrap();
+                log::debug!("Found existing document: {manga:?}");
+                todo!()
             }
 
             None => {
-                let mut channels = HashSet::with_capacity(1);
-                channels.insert(channel_id);
+                log::debug!("No existing document found.");
 
-                self.data.insert(manga_id, (latest_chapter_id, channels));
+                let manga = db::Manga {
+                    id: manga_id.to_string(),
+                    title: "todo".to_string(),
+                    channels: vec![channel_id],
+                };
+
+                self.data_client.create(manga.into()).await?;
             }
         }
+
+        // match self.data.get_mut(&manga_id) {
+        //     Some((existing_chapter_id, channels)) => {
+        //         *existing_chapter_id = latest_chapter_id;
+        //         channels.insert(channel_id);
+        //     }
+
+        //     None => {
+        //         let mut channels = HashSet::with_capacity(1);
+        //         channels.insert(channel_id);
+
+        //         self.data.insert(manga_id, (latest_chapter_id, channels));
+        //     }
+        // }
 
         log::info!("Tracking manga {manga_id} on channel {channel_id}");
         Ok(())
     }
 
     /// Sets the latest chapter id for a given manga.
-    fn set_latest_chapter_id(&mut self, manga_id: MangaId, chapter_id: ChapterId) {
-        if let Some((existing_chapter_id, _)) = self.data.get_mut(&manga_id) {
-            *existing_chapter_id = Some(chapter_id);
-        }
+    fn set_latest_chapter_id(&self, manga_id: &str, chapter_id: ChapterId) {
+        todo!()
+        // if let Some((existing_chapter_id, _)) = self.data.get_mut(&manga_id) {
+        //     *existing_chapter_id = Some(chapter_id);
+        // }
     }
 }
 
 pub struct Handler {
-    pub app: Arc<RwLock<App>>,
+    pub app: Arc<App>,
 }
 
-impl From<Arc<RwLock<App>>> for Handler {
-    fn from(value: Arc<RwLock<App>>) -> Self {
+impl From<Arc<App>> for Handler {
+    fn from(value: Arc<App>) -> Self {
         Handler { app: value }
     }
 }
@@ -153,29 +180,25 @@ impl EventHandler for Handler {
 
 /// Periodically triggers events to search for chapter updates to a given channel.
 async fn periodically_scan_for_updates(
-    app: Arc<RwLock<App>>,
-    tx: mpsc::Sender<(MangaId, LatestChapterId, Vec<ChannelId>)>,
+    app: Arc<App>,
+    tx: mpsc::Sender<(String, LatestChapterId, Vec<ChannelId>)>,
     period: Duration,
 ) {
     loop {
-        let data = {
-            let app = app.read().await;
-            app.data.clone()
-        };
+        // TODO: implement me
+        // for (manga_id, (latest_chapter_id, channels)) in data {
+        //     if let Err(err) = tx
+        //         .send((manga_id, latest_chapter_id, channels.into_iter().collect()))
+        //         .await
+        //     {
+        //         log::error!("Event receiver dropped: {err}");
+        //         break;
+        //     }
 
-        for (manga_id, (latest_chapter_id, channels)) in data {
-            if let Err(err) = tx
-                .send((manga_id, latest_chapter_id, channels.into_iter().collect()))
-                .await
-            {
-                log::error!("Event receiver dropped: {err}");
-                break;
-            }
-
-            // We don't want to exceed any rate limits on the MangaDex API with our
-            // requests so we'll delay a bit before fetching checking each manga.
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
+        //     // We don't want to exceed any rate limits on the MangaDex API with our
+        //     // requests so we'll delay a bit before fetching checking each manga.
+        //     tokio::time::sleep(Duration::from_secs(1)).await;
+        // }
 
         tokio::time::sleep(period).await;
     }
@@ -189,8 +212,8 @@ async fn periodically_scan_for_updates(
 /// message is sent to the corresponding channels using [send_new_chapter_message].
 async fn listen_for_fetch_events(
     http: Arc<Http>,
-    app: Arc<RwLock<App>>,
-    mut rx: mpsc::Receiver<(MangaId, LatestChapterId, Vec<ChannelId>)>,
+    app: Arc<App>,
+    mut rx: mpsc::Receiver<(String, LatestChapterId, Vec<ChannelId>)>,
 ) {
     while let Some((manga_id, latest_chapter_id, channels)) = rx.recv().await {
         log::debug!(
@@ -198,18 +221,17 @@ async fn listen_for_fetch_events(
             channels.len()
         );
 
-        if let Ok(Some(chapter)) = mangadex::updated_chapter(manga_id, latest_chapter_id).await {
+        if let Ok(Some(chapter)) = mangadex::updated_chapter(&manga_id, latest_chapter_id).await {
             log::info!("Found new chapter = {} for manga {manga_id}", chapter.id);
 
             {
-                let mut app = app.write().await;
-                let chapter_id = Uuid::try_parse(&chapter.id).unwrap();
-                app.set_latest_chapter_id(manga_id, chapter_id);
+                let chapter_id = Uuid::parse_str(&chapter.id).unwrap();
+                app.set_latest_chapter_id(&manga_id, chapter_id);
             }
 
             for channel_id in channels {
                 let _ =
-                    send_new_chapter_message(http.clone(), channel_id, manga_id, &chapter).await;
+                    send_new_chapter_message(http.clone(), channel_id, &manga_id, &chapter).await;
             }
         } else {
             log::debug!("Did not find any new chapters for manga = {manga_id}");
@@ -221,7 +243,7 @@ async fn listen_for_fetch_events(
 async fn send_new_chapter_message(
     http: Arc<Http>,
     channel_id: ChannelId,
-    manga_id: MangaId,
+    manga_id: &str,
     chapter: &Chapter,
 ) -> mangadex::Result<()> {
     let manga_title = mangadex::english_title(manga_id)
@@ -255,7 +277,7 @@ async fn send_new_chapter_message(
 async fn main() {
     env_logger::init();
 
-    let app = App::singleton();
+    let app = App::singleton().await;
 
     // Login with a bot token from the environment
     let token = env::var("DISCORD_TOKEN").expect("token");
