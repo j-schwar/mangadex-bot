@@ -1,11 +1,12 @@
-use std::{collections::HashMap, fmt::Display};
+//! The `mangadex` module contains types and functions for interacting with the
+//! [MangaDex API](https://api.mangadex.org/docs/).
 
-use crate::LatestChapterId;
-use bson::Uuid;
+use std::collections::HashMap;
+
+use reqwest::Url;
 use serde::Deserialize;
-use url::Url;
 
-const SITE: &'static str = "https://api.mangadex.org";
+const SITE: &str = "https://api.mangadex.org";
 
 /// An error returned by the MangaDex API.
 #[allow(dead_code)]
@@ -24,7 +25,7 @@ pub enum Error {
     Api(Vec<ApiError>),
 }
 
-impl Display for Error {
+impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Error::*;
 
@@ -145,6 +146,7 @@ pub struct ChapterAttributes {
 }
 
 /// Retrieves the english title for a manga with a given id.
+#[tracing::instrument(err, ret)]
 pub async fn english_title(manga_id: &str) -> Result<Option<String>> {
     let url = Url::parse(SITE)
         .unwrap()
@@ -155,34 +157,33 @@ pub async fn english_title(manga_id: &str) -> Result<Option<String>> {
 
     let manga = fetch_json::<EntityResponse<Manga>>(url)
         .await?
-        .into_result()
-        .map_err(log_error)?;
-    log::debug!("Fetched {manga:?}");
+        .into_result()?;
 
     let title = manga.attributes.english_title().map(|s| s.to_owned());
     Ok(title)
 }
 
 /// Fetches the latest chapter for a given manga.
+#[tracing::instrument(err, ret)]
 pub async fn latest_chapter(manga_id: &str) -> Result<Option<Chapter>> {
     let url = latest_chapter_url(manga_id);
 
     let mut chapter = fetch_json::<CollectionResponse<Chapter>>(url)
         .await?
-        .into_result()
-        .map_err(log_error)?;
+        .into_result()?;
 
     Ok(chapter.pop())
 }
 
 /// Fetches the latest chapter for a given manga only returning it if it's id differs
 /// from the some previous latest chapter id.
+#[tracing::instrument(err, ret)]
 pub async fn updated_chapter(
     manga_id: &str,
-    latest_chapter_id: LatestChapterId,
+    latest_chapter_id: Option<&str>,
 ) -> Result<Option<Chapter>> {
     let chapter = latest_chapter(manga_id).await?.and_then(|c| {
-        let id = Uuid::parse_str(&c.id).unwrap();
+        let id = c.id.as_str();
         if Some(id) != latest_chapter_id {
             Some(c)
         } else {
@@ -197,7 +198,7 @@ pub async fn updated_chapter(
 fn latest_chapter_url(manga_id: &str) -> Url {
     let mut url = Url::parse(SITE).unwrap().join("/chapter").unwrap();
     url.query_pairs_mut()
-        .append_pair("manga", &manga_id.to_string())
+        .append_pair("manga", manga_id)
         .append_pair("limit", "1")
         .append_pair("translatedLanguage[]", "en")
         .append_pair("contentRating[]", "safe")
@@ -207,17 +208,17 @@ fn latest_chapter_url(manga_id: &str) -> Url {
 }
 
 /// Sends an HTTP GET request to a given url decoding the response, if successful, from JSON.
+#[tracing::instrument(err, ret)]
 async fn fetch_json<T>(url: Url) -> Result<T>
 where
+    T: std::fmt::Debug,
     T: serde::de::DeserializeOwned,
 {
-    log::debug!("GET {url}");
     let resp = reqwest::get(url.clone())
         .await
         .map_err(|err| err.with_url(url.clone()))
         .map_err(network_error)?;
 
-    log::debug!("{resp:?}");
     resp.json::<T>()
         .await
         .map_err(|err| err.with_url(url))
@@ -225,27 +226,7 @@ where
 }
 
 /// Converts a [reqwest::Error] into a [crate::mangadex::Error].
+#[tracing::instrument(level = "error")]
 fn network_error(err: reqwest::Error) -> Error {
-    log::error!("reqwest error: {err}");
     Error::NetworkError
-}
-
-/// Logs an error returning it as is. Intended to be used via as a part of a call chain.
-fn log_error(err: Error) -> Error {
-    match &err {
-        Error::NetworkError => log::error!("A network error occurred"),
-        Error::Api(errors) => {
-            for err in errors {
-                log::error!(
-                    "mangadex error: id = {}, status = {}, title = {}, details = {}",
-                    err.id,
-                    err.status,
-                    err.title,
-                    err.detail
-                );
-            }
-        }
-    }
-
-    err
 }
