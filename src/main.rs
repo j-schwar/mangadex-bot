@@ -18,7 +18,7 @@ struct Args {
     /// If not specified, application commands will be registered globally for
     /// all guilds. It may take upwards of an hour for discord to recognize
     /// these commands thus it is best to specify a guild id when testing.
-    #[arg(long)]
+    #[arg(long, env = "MANGADEX_BOT_GUILD_ID")]
     guild_id: Option<u64>,
 
     /// The connection string of the Azure Cosmos DB for MongoDB account.
