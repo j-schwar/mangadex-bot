@@ -50,14 +50,12 @@ impl SlashCommand for Track {
         ctx: Context,
         command: &ApplicationCommandInteraction,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let say = |msg: String| async move {
-            command
-                .create_interaction_response(&ctx.http, |response| {
-                    response
-                        .kind(InteractionResponseType::ChannelMessageWithSource)
-                        .interaction_response_data(|message| message.content(msg))
-                })
-                .await
+        let say = |msg: String| {
+            command.create_interaction_response(&ctx.http, |response| {
+                response
+                    .kind(InteractionResponseType::ChannelMessageWithSource)
+                    .interaction_response_data(|message| message.content(msg))
+            })
         };
 
         let options = command.data.options.as_slice();
